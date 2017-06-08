@@ -5,7 +5,7 @@ enum GraphiteError: Swift.Error {
         case urlFormattingError
 }
 
-struct Timeseries {
+public struct Timeseries {
     let target: String
     let datapoints: [(Date, Double?)]
 }
