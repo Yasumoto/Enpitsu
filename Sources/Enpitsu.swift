@@ -16,7 +16,7 @@ public struct Enpitsu {
     let query = "/render?format=json&target="
     let sema = DispatchSemaphore(value: 0)
 
-    public func init(graphiteServer: String) {
+    public init(graphiteServer: String) {
         self.graphiteServer = graphiteServer
     }
 
