@@ -10,7 +10,7 @@ struct Timeseries {
     let datapoints: [(Date, Double?)]
 }
 
-struct Enpitsu {
+public struct Enpitsu {
     let graphiteServer: String
     let metrics_index = "/metrics/index.json"
     let query = "/render?format=json&target="
