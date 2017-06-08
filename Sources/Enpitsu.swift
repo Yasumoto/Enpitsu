@@ -16,7 +16,9 @@ public struct Enpitsu {
     let query = "/render?format=json&target="
     let sema = DispatchSemaphore(value: 0)
 
-    func retrieveMetrics(_ metric: String, from: String = "-10min", until: String = "now") -> [Timeseries]? {
+    public init() {}
+
+    public func retrieveMetrics(_ metric: String, from: String = "-10min", until: String = "now") -> [Timeseries]? {
         var series = [Timeseries]()
         guard let endpoint = "\(query)\(metric)&from=\(from)&now=\(until)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { print("Unable to format URL!"); return nil }
         if let serverUrl = URL(string: "\(graphiteServer)\(endpoint)") {
