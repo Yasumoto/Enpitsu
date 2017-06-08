@@ -5,19 +5,23 @@ enum GraphiteError: Swift.Error {
         case urlFormattingError
 }
 
+struct Timeseries {
+    let target: String
+    let datapoints: [(Date, Double?)]
+}
+
 struct Enpitsu {
     let graphiteServer: String
     let metrics_index = "/metrics/index.json"
     let query = "/render?format=json&target="
     let sema = DispatchSemaphore(value: 0)
 
-    func retrieveMetrics(_ metric: String, from: String = "-10min", until: String = "now") -> Any? {
-        var jsonOutput: Any?
-        guard let endpoint = "\(query)\(metric)&from=\(from)&now=\(until)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { print("Unable to format URL!"); return jsonOutput }
+    func retrieveMetrics(_ metric: String, from: String = "-10min", until: String = "now") -> [Timeseries]? {
+        var series = [Timeseries]()
+        guard let endpoint = "\(query)\(metric)&from=\(from)&now=\(until)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { print("Unable to format URL!"); return nil }
         if let serverUrl = URL(string: "\(graphiteServer)\(endpoint)") {
             let session = URLSession(configuration: URLSessionConfiguration.default)
             var request = URLRequest(url: serverUrl)
-            print(serverUrl)
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             let task = session.dataTask(with: request) {
                 if let responded = $1 as? HTTPURLResponse {
@@ -30,8 +34,30 @@ struct Enpitsu {
                     print("Code: \(responseError._code)")
                 } else if let data = $0 {
                     do {
-                        let output = try JSONSerialization.jsonObject(with: data, options: .allowFragments)
-                        jsonOutput = output
+                        if let output = try JSONSerialization.jsonObject(with: data, options: .allowFragments) as? [[String: Any]] {
+                            var metrics = [(Date, Double?)]()
+                            for timeseries in output {
+                                if let target = timeseries["target"] as? String {
+                                    if let datapoints = timeseries["datapoints"] as? [[Any]] {
+                                        for datapoint in datapoints {
+                                            if let timestamp = datapoint[1] as? Int {
+                                                var value: Double? = nil
+                                                if let tempValue = datapoint[0] as? Double {
+                                                    value = tempValue
+                                                }
+                                                if let tempValue = datapoint[0] as? Int {
+                                                    value = Double(tempValue)
+                                                }
+
+                                                let date = Date(timeIntervalSince1970: Double(timestamp))
+                                                metrics.append((date, value))
+                                            }
+                                        }
+                                    }
+                                    series.append(Timeseries(target: target, datapoints: metrics))
+                                }
+                            }
+                        }
                     } catch {
                         print("Warning, did not receive valid JSON!\n\(error)")
                     }
@@ -41,6 +67,6 @@ struct Enpitsu {
             task.resume()
             sema.wait()
         }
-        return jsonOutput
+        return series
     }
 }
