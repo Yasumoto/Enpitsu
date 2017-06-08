@@ -11,12 +11,10 @@ public struct Timeseries {
 }
 
 public struct Enpitsu {
-    let graphiteServer: String
+    public let graphiteServer: String
     let metrics_index = "/metrics/index.json"
     let query = "/render?format=json&target="
     let sema = DispatchSemaphore(value: 0)
-
-    public init() {}
 
     public func retrieveMetrics(_ metric: String, from: String = "-10min", until: String = "now") -> [Timeseries]? {
         var series = [Timeseries]()
