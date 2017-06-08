@@ -6,12 +6,12 @@ enum GraphiteError: Swift.Error {
 }
 
 public struct Timeseries {
-    let target: String
-    let datapoints: [(Date, Double?)]
+    public let target: String
+    public let datapoints: [(Date, Double?)]
 }
 
 public struct Enpitsu {
-    public let graphiteServer: String
+    let graphiteServer: String
     let metrics_index = "/metrics/index.json"
     let query = "/render?format=json&target="
     let sema = DispatchSemaphore(value: 0)
