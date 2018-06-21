@@ -7,12 +7,24 @@ public struct Enpitsu {
         case urlFormattingError
     }
 
-    public struct Datapoint: Codable {
-        public let date: Date
-        public let value: Double?
+    public enum GraphiteDate {
+        case string(String)
+        case date(Date)
     }
 
-    public struct Timeseries: Codable {
+    public struct Timeseries: Decodable {
+        public struct Datapoint: Decodable {
+            public let date: Date
+            public let value: Double?
+
+            public init(from decoder: Decoder) throws {
+                var container = try decoder.unkeyedContainer()
+                value = try container.decodeIfPresent(Double.self)
+                let timestamp = try container.decode(Int.self)
+                date = Date(timeIntervalSince1970: TimeInterval(timestamp))
+            }
+        }
+
         public let target: String
         public let datapoints: [Datapoint]
     }
@@ -22,23 +34,38 @@ public struct Enpitsu {
     let authHeader: (String, String)?
     let metrics_index = "/metrics/index.json"
     let session = URLSession(configuration: URLSessionConfiguration.default)
-
+    let graphiteDateFormatter = DateFormatter()
 
     public init(graphiteServer: String, query: String? = nil, authHeader: (String, String)? = nil) {
+        graphiteDateFormatter.dateFormat = "HH:mm_yyyyMMdd"
         self.graphiteServer = graphiteServer
         self.query = query ?? "/render?format=json&target="
         self.authHeader = authHeader
     }
 
-    public func retrieveMetrics(_ metric: String, from: String = "-10min", until: String = "now") throws -> [Timeseries] {
-        let sema = DispatchSemaphore(value: 0)
-        var series = [Timeseries]()
+    private func createURL(metric: String, from: String, until: String) throws -> URL {
         guard let endpoint = "\(query)\(metric)&from=\(from)&until=\(until)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             throw GraphiteError.queryStringFormattingError
         }
         guard let serverUrl = URL(string: "\(graphiteServer)\(endpoint)") else {
             throw GraphiteError.urlFormattingError
         }
+        return serverUrl
+    }
+
+    private func formatDate(_ input: GraphiteDate) -> String {
+        switch input {
+        case .string(let value):
+            return value
+        case .date(let date):
+            return graphiteDateFormatter.string(from: date)
+        }
+    }
+
+    public func retrieveMetrics(_ metric: String, from: GraphiteDate = .string("-10min"), until: GraphiteDate = .string("now")) throws -> [Timeseries] {
+        let sema = DispatchSemaphore(value: 0)
+        var series = [Timeseries]()
+        let serverUrl = try createURL(metric: metric, from: formatDate(from), until: formatDate(until))
         var request = URLRequest(url: serverUrl)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let authHeader = authHeader {
@@ -53,9 +80,6 @@ public struct Enpitsu {
                 print("Code: \(responseError._code)")
             } else if let data = data {
                 do {
-                    if let stringData = String(data: data, encoding: .utf8) {
-                        print(stringData)
-                    }
                     series = try JSONDecoder().decode([Timeseries].self, from: data)
                 } catch {
                     print("Problem parsing JSON: \(error)")
