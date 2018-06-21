@@ -1,76 +1,70 @@
 import Dispatch
 import Foundation
 
-enum GraphiteError: Swift.Error {
-        case urlFormattingError
-}
-
-public struct Timeseries {
-    public let target: String
-    public let datapoints: [(Date, Double?)]
-}
-
 public struct Enpitsu {
-    let graphiteServer: String
-    let metrics_index = "/metrics/index.json"
-    let query = "/render?format=json&target="
-    let sema = DispatchSemaphore(value: 0)
-
-    public init(graphiteServer: String) {
-        self.graphiteServer = graphiteServer
+    enum GraphiteError: Swift.Error {
+        case queryStringFormattingError
+        case urlFormattingError
     }
 
-    public func retrieveMetrics(_ metric: String, from: String = "-10min", until: String = "now") -> [Timeseries]? {
-        var series = [Timeseries]()
-        guard let endpoint = "\(query)\(metric)&from=\(from)&now=\(until)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { print("Unable to format URL!"); return nil }
-        if let serverUrl = URL(string: "\(graphiteServer)\(endpoint)") {
-            let session = URLSession(configuration: URLSessionConfiguration.default)
-            var request = URLRequest(url: serverUrl)
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            let task = session.dataTask(with: request) {
-                if let responded = $1 as? HTTPURLResponse {
-                    if responded.statusCode != 200 {
-                        print("The response was: \(responded)")
-                    }
-                }
-                if let responseError = $2 {
-                    print("Error: \(responseError)")
-                    print("Code: \(responseError._code)")
-                } else if let data = $0 {
-                    do {
-                        if let output = try JSONSerialization.jsonObject(with: data, options: .allowFragments) as? [[String: Any]] {
-                            var metrics = [(Date, Double?)]()
-                            for timeseries in output {
-                                if let target = timeseries["target"] as? String {
-                                    if let datapoints = timeseries["datapoints"] as? [[Any]] {
-                                        for datapoint in datapoints {
-                                            if let timestamp = datapoint[1] as? Int {
-                                                var value: Double? = nil
-                                                if let tempValue = datapoint[0] as? Double {
-                                                    value = tempValue
-                                                }
-                                                if let tempValue = datapoint[0] as? Int {
-                                                    value = Double(tempValue)
-                                                }
+    public struct Datapoint: Codable {
+        public let date: Date
+        public let value: Double?
+    }
 
-                                                let date = Date(timeIntervalSince1970: Double(timestamp))
-                                                metrics.append((date, value))
-                                            }
-                                        }
-                                    }
-                                    series.append(Timeseries(target: target, datapoints: metrics))
-                                }
-                            }
-                        }
-                    } catch {
-                        print("Warning, did not receive valid JSON!\n\(error)")
-                    }
-                }
-                self.sema.signal()
-            }
-            task.resume()
-            sema.wait()
+    public struct Timeseries: Codable {
+        public let target: String
+        public let datapoints: [Datapoint]
+    }
+
+    let graphiteServer: String
+    let query: String
+    let authHeader: (String, String)?
+    let metrics_index = "/metrics/index.json"
+    let session = URLSession(configuration: URLSessionConfiguration.default)
+
+
+    public init(graphiteServer: String, query: String? = nil, authHeader: (String, String)? = nil) {
+        self.graphiteServer = graphiteServer
+        self.query = query ?? "/render?format=json&target="
+        self.authHeader = authHeader
+    }
+
+    public func retrieveMetrics(_ metric: String, from: String = "-10min", until: String = "now") throws -> [Timeseries] {
+        let sema = DispatchSemaphore(value: 0)
+        var series = [Timeseries]()
+        guard let endpoint = "\(query)\(metric)&from=\(from)&until=\(until)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw GraphiteError.queryStringFormattingError
         }
+        guard let serverUrl = URL(string: "\(graphiteServer)\(endpoint)") else {
+            throw GraphiteError.urlFormattingError
+        }
+        var request = URLRequest(url: serverUrl)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let authHeader = authHeader {
+            request.setValue(authHeader.1, forHTTPHeaderField: authHeader.0)
+        }
+        let task = session.dataTask(with: request) { data, response, responseError in
+            if let response = response as? HTTPURLResponse, response.statusCode != 200 {
+                print("The response was: \(response)")
+            }
+            if let responseError = responseError {
+                print("Error: \(responseError)")
+                print("Code: \(responseError._code)")
+            } else if let data = data {
+                do {
+                    if let stringData = String(data: data, encoding: .utf8) {
+                        print(stringData)
+                    }
+                    series = try JSONDecoder().decode([Timeseries].self, from: data)
+                } catch {
+                    print("Problem parsing JSON: \(error)")
+                }
+            }
+            sema.signal()
+        }
+        task.resume()
+        sema.wait()
         return series
     }
 }
