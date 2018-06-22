@@ -2,6 +2,8 @@
 
 A client for [`graphite-api`](https://graphite-api.readthedocs.io), named after the Japanese word for pencil. This can also be used through Grafana if that is configured to pass through to Graphite as a datasource.
 
+If there are dashboards configured in Grafana, one can also use this library to get a list of dashboards as well as the graphs on a dashboard.
+
 Example usage:
 
 ```swift
