@@ -4,7 +4,7 @@ A client for [`graphite-api`](https://graphite-api.readthedocs.io), named after 
 
 If there are dashboards configured in Grafana, one can also use this library to get a list of dashboards as well as the graphs on a dashboard.
 
-Example usage:
+## Usage
 
 ```swift
 import Foundation
