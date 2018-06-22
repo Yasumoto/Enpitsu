@@ -2,7 +2,7 @@ import Dispatch
 import Foundation
 
 public struct Enpitsu {
-    enum GraphiteError: Swift.Error {
+    public enum GraphiteError: Swift.Error {
         case queryStringFormattingError
         case urlFormattingError
     }
@@ -14,16 +14,16 @@ public struct Enpitsu {
 
     public struct DashboardResponse: Decodable {
         public struct Meta: Decodable {
-            let type: String
-            let createdBy: String
-            let updatedBy: String
-            let version: Int
-            let slug: String
-            let url: String
+            public let type: String
+            public let createdBy: String
+            public let updatedBy: String
+            public let version: Int
+            public let slug: String
+            public let url: String
         }
 
-        let dashboard: Dashboard
-        let meta: Meta
+        public let dashboard: Dashboard
+        public let meta: Meta
     }
 
     public struct Dashboard: Decodable {
@@ -33,27 +33,26 @@ public struct Enpitsu {
             }
 
             public struct Target: Decodable {
-                let type: String?
-                let query: String?
-                let target: String?
-                let expr: String? // The important part!
+                public let type: String?
+                public let target: String? // The important part!
+                public let expr: String? // The query can also be here
             }
 
-            let type: PanelType
-            let description: String?
+            public let type: PanelType
+            public let description: String?
             //TODO: let thresholds =
-            let title: String
-            let targets: [Target]?
+            public let title: String
+            public let targets: [Target]?
         }
 
-        let id: Int
-        let uid: String
-        let title: String
-        let url: String?
-        let type: String?
-        let tags: [String]
-        let isStarred: Bool?
-        let panels: [Panel]?
+        public let id: Int
+        public let uid: String
+        public let title: String
+        public let url: String?
+        public let type: String?
+        public let tags: [String]
+        public let isStarred: Bool?
+        public let panels: [Panel]?
     }
 
     public struct Timeseries: Decodable {
