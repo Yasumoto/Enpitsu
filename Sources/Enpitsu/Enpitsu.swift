@@ -43,7 +43,17 @@ public struct Enpitsu {
         self.authHeader = authHeader
     }
 
-    private func createURL(metric: String, from: String, until: String) throws -> URL {
+    /**
+    
+     Generate a url for metrics
+     
+     - parameter metric: Query to retrieve data from Graphite
+     - parameter from: Starting point. Graphite parses a specific date format as well as a host of relative times
+     - parameter until: Last metric to gather. Follows same format as above
+     
+     - returns: Valid URL to query Graphite
+    */
+    private func createMetricsURL(metric: String, from: String, until: String) throws -> URL {
         guard let endpoint = "\(query)\(metric)&from=\(from)&until=\(until)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             throw GraphiteError.queryStringFormattingError
         }
@@ -62,10 +72,20 @@ public struct Enpitsu {
         }
     }
 
+    /**
+ 
+     Query Graphite for a set of metrics given a query and timebox
+     
+     - parameter metric: Query to retrieve data from Graphite
+     - parameter from: Starting point. Graphite parses a specific date format as well as a host of relative times
+     - parameter until: Last metric to gather. Follows same format as above
+     
+     - returns: Timeseries data
+     */
     public func retrieveMetrics(_ metric: String, from: GraphiteDate = .string("-10min"), until: GraphiteDate = .string("now")) throws -> [Timeseries] {
         let sema = DispatchSemaphore(value: 0)
         var series = [Timeseries]()
-        let serverUrl = try createURL(metric: metric, from: formatDate(from), until: formatDate(until))
+        let serverUrl = try createMetricsURL(metric: metric, from: formatDate(from), until: formatDate(until))
         var request = URLRequest(url: serverUrl)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let authHeader = authHeader {
