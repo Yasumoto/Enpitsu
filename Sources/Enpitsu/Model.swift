@@ -62,6 +62,46 @@ public extension Enpitsu {
         public let tags: [String]
         public let isStarred: Bool?
         public let panels: [Panel]?
+        public let templating: Templates?
+    }
+
+    struct Templates: Decodable {
+        public struct Template: Decodable {
+            public let allFormat: AllFormat?
+            public let allValue: String?
+            public let current: CurrentValue
+            public let datasource: String?
+            public let name: String
+            public let query: String
+        }
+
+        public enum AllFormat: String, Decodable {
+            case glob
+        }
+
+        public struct CurrentValue: Decodable {
+            public let text: String
+            public let value: String?
+            public let values: [String]?
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                text = try container.decode(String.self, forKey: .text)
+                do {
+                    value = try container.decode(String.self, forKey: .value)
+                    values = nil
+                } catch {
+                    values = try container.decode([String].self, forKey: .value)
+                    value = nil
+                }
+            }
+
+            enum CodingKeys: String, CodingKey {
+                case text, value
+            }
+        }
+
+        public let list: [Template]
     }
 
     struct Timeseries: Decodable {

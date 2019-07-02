@@ -37,11 +37,6 @@ public struct Enpitsu {
      - returns: Valid HTTPClient.Request to query Graphite
      */
     private func createRequest(endpoint: String) throws -> HTTPClient.Request {
-        let characterSet = CharacterSet.urlQueryAllowed.subtracting(["'", ","])
-        guard let endpoint = endpoint.addingPercentEncoding(withAllowedCharacters: characterSet) else {
-            throw GraphiteError.queryStringFormattingError
-        }
-
         guard let serverUrl = URL(string: "\(graphiteServer)\(endpoint)") else {
             throw GraphiteError.urlFormattingError
         }
@@ -89,7 +84,7 @@ public struct Enpitsu {
             guard let count = response.body?.readableBytes, let body = response.body?.readBytes(length: count) else {
                 throw EnpitsuError.noResponseData
             }
-            //if let answer = String(data: Data(body), encoding: .utf8) { print("\(answer)") }
+            //if let dashboard = String(data: Data(body), encoding: .utf8) { print("\(dashboard)") }
             return try JSONDecoder().decode(DashboardResponse.self, from: Data(body))
         }
     }
@@ -172,15 +167,36 @@ public struct Enpitsu {
 
      - returns: Timeseries data
      */
-    public func retrieveMetrics(_ metric: String, datasourceID: Int, start: Date? = nil, end: Date = Date()) -> EventLoopFuture<TimeseriesResponse> {
+    public func retrieveMetrics(_ metric: String, datasourceID: Int, templates: [Templates.Template]? = nil, start: Date? = nil, end: Date = Date()) -> EventLoopFuture<TimeseriesResponse> {
         var start = start
         if start == nil {
             let calendar = Calendar(identifier: .gregorian)
             start = calendar.date(byAdding: .minute, value: -10, to: end)!
         }
+
+        var templatedMetric = metric
+
+        if let templates = templates {
+            _ = templates.map { (template: Templates.Template) in
+                let contents: String
+                if let format = template.allFormat, format == .glob, template.current.value == "$__all" {
+                        contents = "*"
+                } else if let format = template.allValue {
+                    contents = format
+                } else {
+                    contents = template.current.text
+                }
+                templatedMetric = templatedMetric.replacingOccurrences(of: "$\(template.name)", with: contents)
+            }
+        }
+        let characterSet = CharacterSet.urlQueryAllowed.subtracting(["'", ",", "=", "+", "/"])
+        guard let urlEncodedTemplatedMetric = templatedMetric.addingPercentEncoding(withAllowedCharacters: characterSet) else {
+            return self.client.eventLoopGroup.next().makeFailedFuture(GraphiteError.queryStringFormattingError)
+        }
+        print("** URLEncoded Templated metric: \(urlEncodedTemplatedMetric)")
         let request: HTTPClient.Request
         if datasourceID == 1 {
-            let updatedMetric = metric.replacingOccurrences(of: "'1m'", with: "'1min'")
+            let updatedMetric = urlEncodedTemplatedMetric.replacingOccurrences(of: "'1m'", with: "'1min'")
             do {
                 request = try createRequest(endpoint: "/api/datasources/proxy/1/render?target=\(updatedMetric)&from=-10m&until=now&format=json&maxDataPoints=400")
             } catch {
@@ -188,18 +204,18 @@ public struct Enpitsu {
             }
         } else {
             do {
-                request = try createRequest(endpoint: "/api/datasources/proxy/\(datasourceID)/api/v1/query_range?query=\(metric)&start=\(Int(start!.timeIntervalSince1970))&end=\(Int(end.timeIntervalSince1970))&step=60")
+                request = try createRequest(endpoint: "/api/datasources/proxy/\(datasourceID)/api/v1/query_range?query=\(urlEncodedTemplatedMetric)&start=\(Int(start!.timeIntervalSince1970))&end=\(Int(end.timeIntervalSince1970))&step=60")
             } catch {
                 return self.client.eventLoopGroup.next().makeFailedFuture(error)
             }
         }
-        //print("** Request: \(request)")
+        print("** Request: \(request)")
         return client.execute(request: request).flatMapThrowing { serverResponse -> TimeseriesResponse in
             var response = serverResponse
             guard let count = response.body?.readableBytes, let body = response.body?.readBytes(length: count) else {
                 throw EnpitsuError.noResponseData
             }
-            //if let metrics = String(data: Data(body), encoding: .utf8) { print("** Metrics response:\n\(metrics)") }
+            if let metrics = String(data: Data(body), encoding: .utf8) { print("** Metrics response:\n\(metrics)") }
             do {
                 return try .prometheus(JSONDecoder().decode(PrometheusResponse.self, from: Data(body)))
             } catch {
