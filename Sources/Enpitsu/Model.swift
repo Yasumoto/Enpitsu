@@ -1,6 +1,6 @@
 //
-//  File.swift
-//  
+//  Model.swift
+//
 //
 //  Created by Joe Smith on 6/29/19.
 //

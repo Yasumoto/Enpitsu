@@ -1,4 +1,4 @@
-// swift-tools-version:5.0
+// swift-tools-version:5.1
 
 import PackageDescription
 
@@ -9,10 +9,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
-        .package(url: "https://github.com/swift-server/swift-nio-http-client", .branch("master"))
+        .package(url: "https://github.com/swift-server/async-http-client", from: "1.0.0-alpha.4")
     ],
     targets: [
-        .target(name: "Enpitsu", dependencies: ["NIO", "NIOHTTPClient"]),
+        .target(name: "Enpitsu", dependencies: ["NIO", "AsyncHTTPClient"]),
         .testTarget(name: "EnpitsuTests", dependencies: ["Enpitsu"]),
     ]
 )

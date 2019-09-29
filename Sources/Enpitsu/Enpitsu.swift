@@ -1,6 +1,6 @@
 import Foundation
 import NIO
-import NIOHTTPClient
+import AsyncHTTPClient
 
 public enum EnpitsuError: Error {
     case noResponseData

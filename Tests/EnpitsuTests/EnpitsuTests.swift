@@ -3,7 +3,8 @@ import XCTest
 
 class EnpitsuTests: XCTestCase {
     func testExample() {
-        let _ = Enpitsu(graphiteServer: "https://localhost")
+        let grafana = Enpitsu(graphiteServer: "https://localhost")
+        try? grafana.client.syncShutdown()
     }
 
 
