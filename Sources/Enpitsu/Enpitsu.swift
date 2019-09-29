@@ -1,88 +1,29 @@
-import Dispatch
 import Foundation
+import NIO
+import AsyncHTTPClient
+
+public enum EnpitsuError: Error {
+    case noResponseData
+}
 
 public struct Enpitsu {
     public enum GraphiteError: Swift.Error {
         case queryStringFormattingError
         case urlFormattingError
-    }
-
-    public enum GraphiteDate {
-        case string(String)
-        case date(Date)
-    }
-
-    public struct DashboardResponse: Decodable {
-        public struct Meta: Decodable {
-            public let type: String
-            public let createdBy: String
-            public let updatedBy: String
-            public let version: Int
-            public let slug: String
-            public let url: String
-        }
-
-        public let dashboard: Dashboard
-        public let meta: Meta
-    }
-
-    public struct Dashboard: Decodable {
-        public struct Panel: Decodable {
-            public enum PanelType: String, Decodable {
-                case row, graph
-            }
-
-            public struct Target: Decodable {
-                public let type: String?
-                public let target: String? // The important part!
-                public let expr: String? // The query can also be here
-            }
-
-            public let type: PanelType
-            public let description: String?
-            //TODO: let thresholds =
-            public let title: String
-            public let targets: [Target]?
-        }
-
-        public let id: Int
-        public let uid: String
-        public let title: String
-        public let url: String?
-        public let type: String?
-        public let tags: [String]
-        public let isStarred: Bool?
-        public let panels: [Panel]?
-    }
-
-    public struct Timeseries: Decodable {
-        public struct Datapoint: Decodable {
-            public let date: Date
-            public let value: Double?
-
-            public init(from decoder: Decoder) throws {
-                var container = try decoder.unkeyedContainer()
-                value = try container.decodeIfPresent(Double.self)
-                let timestamp = try container.decode(Int.self)
-                date = Date(timeIntervalSince1970: TimeInterval(timestamp))
-            }
-        }
-
-        public let target: String
-        public let datapoints: [Datapoint]
+        case improperlyFormattedRequest
     }
 
     let graphiteServer: String
-    let query: String
-    let authHeader: (String, String)?
-    let session = URLSession(configuration: URLSessionConfiguration.default)
+    let cookie: String?
+    let userAgent: String?
     let graphiteDateFormatter = DateFormatter()
+    public let client = HTTPClient(eventLoopGroupProvider: .createNew)
 
-    public init(graphiteServer: String, query: String? = nil, authHeader: (String, String)? = nil) {
+    public init(graphiteServer: String, query: String? = nil, cookie: String? = nil, userAgent: String? = nil) {
         graphiteDateFormatter.dateFormat = "HH:mm_yyyyMMdd"
         self.graphiteServer = graphiteServer
-        self.query = query ?? "/render?format=json&target="
-        self.authHeader = authHeader
+        self.cookie = cookie
+        self.userAgent = userAgent
     }
 
     /**
@@ -93,16 +34,22 @@ public struct Enpitsu {
      - parameter from: Starting point. Graphite parses a specific date format as well as a host of relative times
      - parameter until: Last metric to gather. Follows same format as above
 
-     - returns: Valid URL to query Graphite
-    */
-    private func createMetricsURL(metric: String, from: String, until: String) throws -> URL {
-        guard let endpoint = "\(query)\(metric)&from=\(from)&until=\(until)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            throw GraphiteError.queryStringFormattingError
-        }
+     - returns: Valid HTTPClient.Request to query Graphite
+     */
+    private func createRequest(endpoint: String) throws -> HTTPClient.Request {
         guard let serverUrl = URL(string: "\(graphiteServer)\(endpoint)") else {
             throw GraphiteError.urlFormattingError
         }
-        return serverUrl
+        var request = try HTTPClient.Request(url: serverUrl)
+        request.headers.add(name: "Accept", value: "application/json")
+        if let cookie = cookie {
+            request.headers.add(name: "Cookie", value: cookie)
+        }
+        if let userAgent = userAgent {
+            request.headers.add(name: "User-Agent", value: userAgent)
+        }
+
+        return request
     }
 
     private func formatDate(_ input: GraphiteDate) -> String {
@@ -114,6 +61,7 @@ public struct Enpitsu {
         }
     }
 
+
     /**
 
      Get a dashboard from Grafana
@@ -122,39 +70,48 @@ public struct Enpitsu {
 
      - returns: The matching Dashboard
      */
-    public func getDashboard(_ uid: String) throws -> DashboardResponse? {
-        let sema = DispatchSemaphore(value: 0)
-        var dashboard: DashboardResponse? = nil
-        guard let endpoint = "\(uid)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            throw GraphiteError.queryStringFormattingError
+    public func getDashboard(_ uid: String) -> EventLoopFuture<DashboardResponse> {
+        let request: HTTPClient.Request
+
+        do {
+            request = try createRequest(endpoint: "/api/dashboards/uid/\(uid)")
+        } catch {
+            return self.client.eventLoopGroup.next().makeFailedFuture(error)
         }
-        guard let serverUrl = URL(string: "\(graphiteServer)/api/dashboards/uid/\(endpoint)") else {
-            throw GraphiteError.urlFormattingError
-        }
-        var request = URLRequest(url: serverUrl)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let authHeader = authHeader {
-            request.setValue(authHeader.1, forHTTPHeaderField: authHeader.0)
-        }
-        let task = session.dataTask(with: request) { data, response, responseError in
-            if let response = response as? HTTPURLResponse, response.statusCode != 200 {
-                print("The response was: \(response)")
+
+        return client.execute(request: request).flatMapThrowing { serverResponse -> DashboardResponse in
+            var response = serverResponse
+            guard let count = response.body?.readableBytes, let body = response.body?.readBytes(length: count) else {
+                throw EnpitsuError.noResponseData
             }
-            if let responseError = responseError {
-                print("Error: \(responseError)")
-                print("Code: \(responseError._code)")
-            } else if let data = data {
-                do {
-                    dashboard = try JSONDecoder().decode(DashboardResponse.self, from: data)
-                } catch {
-                    print("Problem parsing JSON: \(error)")
-                }
-            }
-            sema.signal()
+            //if let dashboard = String(data: Data(body), encoding: .utf8) { print("\(dashboard)") }
+            return try JSONDecoder().decode(DashboardResponse.self, from: Data(body))
         }
-        task.resume()
-        sema.wait()
-        return dashboard
+    }
+
+    /**
+     Find a datasource by its name
+     */
+    public func getDatasource(name: String) -> EventLoopFuture<Int> {
+        let request: HTTPClient.Request
+
+        do {
+            request = try createRequest(endpoint: "/api/datasources/id/\(name)")
+        } catch {
+            return self.client.eventLoopGroup.next().makeFailedFuture(error)
+        }
+
+        return client.execute(request: request).flatMapThrowing { serverResponse -> Int in
+            struct DataSourceResponse: Decodable {
+                let id: Int
+            }
+            var response = serverResponse
+            guard let count = response.body?.readableBytes, let body = response.body?.readBytes(length: count) else {
+                throw EnpitsuError.noResponseData
+            }
+            //if let answer = String(data: Data(body), encoding: .utf8) { print("\(answer)") }
+            return try JSONDecoder().decode(DataSourceResponse.self, from: Data(body)).id
+        }
     }
 
     /**
@@ -165,40 +122,40 @@ public struct Enpitsu {
 
      - returns: List of matching Dashboards
      */
-    public func searchDashboards(_ query: String) throws -> [Dashboard] {
-        let sema = DispatchSemaphore(value: 0)
-        var dashboards = [Dashboard]()
-        guard let endpoint = "\(query)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            throw GraphiteError.queryStringFormattingError
-        }
-        guard let serverUrl = URL(string: "\(graphiteServer)/api/search?query=\(endpoint)") else {
-            throw GraphiteError.urlFormattingError
-        }
-        var request = URLRequest(url: serverUrl)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let authHeader = authHeader {
-            request.setValue(authHeader.1, forHTTPHeaderField: authHeader.0)
-        }
-        let task = session.dataTask(with: request) { data, response, responseError in
-            if let response = response as? HTTPURLResponse, response.statusCode != 200 {
-                print("The response was: \(response)")
-            }
-            if let responseError = responseError {
-                print("Error: \(responseError)")
-                print("Code: \(responseError._code)")
-            } else if let data = data {
-                do {
-                    dashboards = try JSONDecoder().decode([Dashboard].self, from: data)
-                } catch {
-                    print("Problem parsing JSON: \(error)")
-                }
-            }
-            sema.signal()
-        }
-        task.resume()
-        sema.wait()
-        return dashboards
-    }
+    /*public func searchDashboards(_ query: String) throws -> [Dashboard] {
+     let sema = DispatchSemaphore(value: 0)
+     var dashboards = [Dashboard]()
+     guard let endpoint = "\(query)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+     throw GraphiteError.queryStringFormattingError
+     }
+     guard let serverUrl = URL(string: "\(graphiteServer)/api/search?query=\(endpoint)") else {
+     throw GraphiteError.urlFormattingError
+     }
+     var request = URLRequest(url: serverUrl)
+     request.setValue("application/json", forHTTPHeaderField: "Accept")
+     if let authHeader = authHeader {
+     request.setValue(authHeader.1, forHTTPHeaderField: authHeader.0)
+     }
+     let task = session.dataTask(with: request) { data, response, responseError in
+     if let response = response as? HTTPURLResponse, response.statusCode != 200 {
+     print("The response was: \(response)")
+     }
+     if let responseError = responseError {
+     print("Error: \(responseError)")
+     print("Code: \(responseError._code)")
+     } else if let data = data {
+     do {
+     dashboards = try JSONDecoder().decode([Dashboard].self, from: data)
+     } catch {
+     print("Problem parsing JSON: \(error)")
+     }
+     }
+     sema.signal()
+     }
+     task.resume()
+     sema.wait()
+     return dashboards
+     }*/
 
     /**
 
@@ -210,33 +167,60 @@ public struct Enpitsu {
 
      - returns: Timeseries data
      */
-    public func retrieveMetrics(_ metric: String, from: GraphiteDate = .string("-10min"), until: GraphiteDate = .string("now")) throws -> [Timeseries] {
-        let sema = DispatchSemaphore(value: 0)
-        var series = [Timeseries]()
-        let serverUrl = try createMetricsURL(metric: metric, from: formatDate(from), until: formatDate(until))
-        var request = URLRequest(url: serverUrl)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let authHeader = authHeader {
-            request.setValue(authHeader.1, forHTTPHeaderField: authHeader.0)
+    public func retrieveMetrics(_ metric: String, datasourceID: Int, templates: [Templates.Template]? = nil, start: Date? = nil, end: Date = Date()) -> EventLoopFuture<TimeseriesResponse> {
+        var start = start
+        if start == nil {
+            let calendar = Calendar(identifier: .gregorian)
+            start = calendar.date(byAdding: .minute, value: -10, to: end)!
         }
-        let task = session.dataTask(with: request) { data, response, responseError in
-            if let response = response as? HTTPURLResponse, response.statusCode != 200 {
-                print("The response was: \(response)")
-            }
-            if let responseError = responseError {
-                print("Error: \(responseError)")
-                print("Code: \(responseError._code)")
-            } else if let data = data {
-                do {
-                    series = try JSONDecoder().decode([Timeseries].self, from: data)
-                } catch {
-                    print("Problem parsing JSON: \(error)")
+
+        var templatedMetric = metric
+
+        if let templates = templates {
+            _ = templates.map { (template: Templates.Template) in
+                let contents: String
+                if let format = template.allFormat, format == .glob, template.current.value == "$__all" {
+                        contents = "*"
+                } else if let format = template.allValue {
+                    contents = format
+                } else {
+                    contents = template.current.text
                 }
+                templatedMetric = templatedMetric.replacingOccurrences(of: "$\(template.name)", with: contents)
             }
-            sema.signal()
         }
-        task.resume()
-        sema.wait()
-        return series
+        let characterSet = CharacterSet.urlQueryAllowed.subtracting(["'", ",", "=", "+", "/"])
+        guard let urlEncodedTemplatedMetric = templatedMetric.addingPercentEncoding(withAllowedCharacters: characterSet) else {
+            return self.client.eventLoopGroup.next().makeFailedFuture(GraphiteError.queryStringFormattingError)
+        }
+        print("** URLEncoded Templated metric: \(urlEncodedTemplatedMetric)")
+        let request: HTTPClient.Request
+        if datasourceID == 1 {
+            let updatedMetric = urlEncodedTemplatedMetric.replacingOccurrences(of: "'1m'", with: "'1min'")
+            do {
+                request = try createRequest(endpoint: "/api/datasources/proxy/1/render?target=\(updatedMetric)&from=-10m&until=now&format=json&maxDataPoints=400")
+            } catch {
+                return self.client.eventLoopGroup.next().makeFailedFuture(error)
+            }
+        } else {
+            do {
+                request = try createRequest(endpoint: "/api/datasources/proxy/\(datasourceID)/api/v1/query_range?query=\(urlEncodedTemplatedMetric)&start=\(Int(start!.timeIntervalSince1970))&end=\(Int(end.timeIntervalSince1970))&step=60")
+            } catch {
+                return self.client.eventLoopGroup.next().makeFailedFuture(error)
+            }
+        }
+        print("** Request: \(request)")
+        return client.execute(request: request).flatMapThrowing { serverResponse -> TimeseriesResponse in
+            var response = serverResponse
+            guard let count = response.body?.readableBytes, let body = response.body?.readBytes(length: count) else {
+                throw EnpitsuError.noResponseData
+            }
+            if let metrics = String(data: Data(body), encoding: .utf8) { print("** Metrics response:\n\(metrics)") }
+            do {
+                return try .prometheus(JSONDecoder().decode(PrometheusResponse.self, from: Data(body)))
+            } catch {
+                return try .graphite(JSONDecoder().decode([Timeseries].self, from: Data(body)))
+            }
+        }
     }
 }
